@@ -1,5 +1,6 @@
 import requests
 import boto3
+from boto3.session import Session
 from cmr import CollectionQuery
 from requests.auth import HTTPBasicAuth
 
@@ -9,20 +10,23 @@ from pystac import STAC_IO, Catalog
 
 class HarmonyJob():
 
-    def __init__(self, session, job_req):
+    def __init__(self, session, aws_keys, job_req):
         self.base_uri = 'https://harmony.earthdata.nasa.gov/jobs'
         self.job_req = job_req
         self.job_id = job_req['jobID']
         self._session = session
+        self._aws_session = Session(aws_access_key_id=aws_keys['AccessKeyId'],
+                                    aws_secret_access_key=aws_keys['SecretAccessKey'],
+                                    aws_session_token=aws_keys['SessionToken'])
+        self.s3_client = self._aws_session.resource('s3')
         STAC_IO.read_text_method = self._stac_auth_read
-        
+
     def _stac_auth_read(self, uri):
         parsed = urlparse(uri)
         if parsed.scheme == 's3':
             bucket = parsed.netloc
             key = parsed.path[1:]
-            s3 = boto3.resource('s3')
-            obj = s3.Object(bucket, key)
+            obj = self.s3_client.Object(bucket, key)
             return obj.get()['Body'].read().decode('utf-8')
         elif parsed.scheme.startswith('http'):
             return self._session.get(uri).text
@@ -30,19 +34,37 @@ class HarmonyJob():
             return STAC_IO.default_read_text_method(uri)
 
     def status(self):
-        status = self._session.get(f'{self.base_uri}/{self.job_id}')
-        return status.json()
-    
+        req = self._session.get(f'{self.base_uri}/{self.job_id}').json()
+        return req
+
     def stac_catalog(self):
         base_uri = 'https://harmony.earthdata.nasa.gov/stac'
-        stac_catalog_uri = f'{base_uri}/{self.job_id}'
+        stac_catalog_uri = f'{base_uri}/{self.job_id}/'
         cat = Catalog.from_file(stac_catalog_uri)
         return cat
 
     def stac_uri(self):
         base_uri = 'https://harmony.earthdata.nasa.gov/stac'
-        stac_catalog_uri = f'{base_uri}/{self.job_id}'
+        stac_catalog_uri = f'{base_uri}/{self.job_id}/'
         return self._session.get(stac_catalog_uri).json()
+
+    def s3_file_uris(self):
+        status = self.status()
+        self.s3_files = [link['href'] for link in status['links'] if link['rel'] == 'data']
+        return self.s3_files
+
+    def s3_download_file(self, uri):
+        parsed = urlparse(uri)
+        file_name = parsed.path.split('/')[-1]
+        if parsed.scheme == 's3':
+            bucket = parsed.netloc
+            key = parsed.path
+            obj = self.s3_client.Object(bucket, key)
+            print(obj.__dict__)
+            obj.download_file(f'./data/{file_name}')
+        else:
+            print('not a s3 location')
+            return None
 
     def download(self):
         return None
@@ -69,13 +91,16 @@ class Harmony():
         if not response.ok:
             print('Authentication failed')
             return None
+        else:
+            aws_temp_keys = 'https://harmony.earthdata.nasa.gov/cloud-access'
+            self.aws_keys = self._session.get(aws_temp_keys).json()
 
     def collection(self, id):
         base_uri = 'https://harmony.earthdata.nasa.gov'
         collection_uri = f'{base_uri}/{id}/ogc-api-coverages/1.0.0/collections?limit=100&f=json'
         collection = self._session.get(collection_uri)
         return collection.json()
-    
+
     def subset_uri(self, params):
         base_uri = 'https://harmony.earthdata.nasa.gov'
         subset_uri = f"{base_uri}/{params['collection_id']}/ogc-api-coverages/" + \
@@ -90,7 +115,6 @@ class Harmony():
                      f"{params['ogc-api-coverages_version']}/collections/{params['variable']}" + \
                      f"/coverage/rangeset?format={params['format']}&subset=time(\"{params['start']}\":\"{params['stop']}\")" + \
                      f"&subset=lat{params['lat']}&subset=lon{params['lon']}"
-        print(subset_uri)
         req = self._session.get(subset_uri).json()
         print(req)
-        return HarmonyJob(self._session, req)
+        return HarmonyJob(self._session, self.aws_keys, req)
