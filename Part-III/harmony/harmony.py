@@ -27,7 +27,7 @@ class HarmonyJob():
         self._aws_session = Session(aws_access_key_id=aws_keys['AccessKeyId'],
                                     aws_secret_access_key=aws_keys['SecretAccessKey'],
                                     aws_session_token=aws_keys['SessionToken'])
-        self.s3_client = self._aws_session.resource('s3')
+        self.s3_client = self._aws_session.client('s3')
         STAC_IO.read_text_method = self._stac_auth_read
 
     def _stac_auth_read(self, uri):
@@ -68,15 +68,13 @@ class HarmonyJob():
         if parsed.scheme == 's3':
             bucket = parsed.netloc
             key = parsed.path[1:]
-            obj = self.s3_client.Object(bucket, key)
-            print(obj.__dict__)
-            obj.download_file(f'./data/{file_name}')
+            self.s3_client.download_file(bucket, key, f'data/{file_name}')
         else:
             print('not a s3 location')
             return None
 
     def s3_open_zarr(self, uri):
-        zarr_store = zarr_fs.get_mapper(root=uri, check=False)
+        zarr_store = self.zarr_fs.get_mapper(root=uri, check=False)
         zarr_dataset = zarr.open(zarr_store)
         return zarr_dataset
 
