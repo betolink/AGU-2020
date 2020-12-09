@@ -1,4 +1,6 @@
 import requests
+import s3fs
+import zarr
 import boto3
 from boto3.session import Session
 from cmr import CollectionQuery
@@ -15,6 +17,13 @@ class HarmonyJob():
         self.job_req = job_req
         self.job_id = job_req['jobID']
         self._session = session
+        self._aws_keys = aws_keys
+        self.zarr_fs = s3fs.S3FileSystem(
+            key=self._aws_keys['AccessKeyId'],
+            secret=self._aws_keys['SecretAccessKey'],
+            token=self._aws_keys['SessionToken'],
+            client_kwargs={'region_name':'us-west-2'},
+        )
         self._aws_session = Session(aws_access_key_id=aws_keys['AccessKeyId'],
                                     aws_secret_access_key=aws_keys['SecretAccessKey'],
                                     aws_session_token=aws_keys['SessionToken'])
@@ -58,13 +67,21 @@ class HarmonyJob():
         file_name = parsed.path.split('/')[-1]
         if parsed.scheme == 's3':
             bucket = parsed.netloc
-            key = parsed.path
+            key = parsed.path[1:]
             obj = self.s3_client.Object(bucket, key)
             print(obj.__dict__)
             obj.download_file(f'./data/{file_name}')
         else:
             print('not a s3 location')
             return None
+
+    def s3_open_zarr(self, uri):
+        zarr_store = zarr_fs.get_mapper(root=uri, check=False)
+        zarr_dataset = zarr.open(zarr_store)
+        return zarr_dataset
+
+    def s3_open_netcdf(self, uri):
+        return None
 
     def download(self):
         return None
